@@ -1,5 +1,5 @@
 /**
- * Print a simple "Hello world!"
+ * Print a simple unicode file
  *
  * @file main.cpp
  * @section LICENSE
@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <iomanip>
 #include <cstdint>
+#include <assert.h>
 
 namespace
 {
@@ -59,42 +60,66 @@ const uint8_t utf8d[] = {
 	1, 3, 1, 1, 1, 1, 1, 3, 1, 3, 1, 1, 1, 1, 1, 1, 1, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // s7..s8
 };
 
-template<typename Iterator>
-UnicodeType GetFormatType(Iterator begin, Iterator end)
+UnicodeType GetFormatType(const char* begin, const char* end)
 {
 	static const char UTF_8_BOM[] = "\xEF\xBB\xBF";
 	static const char UTF_16_LE_BOM[] = "\xFF\xFE";
 	static const char UTF_16_BE_BOM[] = "\xFE\xFF";
 
-	if (std::equal(UTF_8_BOM, UTF_8_BOM + sizeof(UTF_8_BOM), begin))
+	assert(begin != nullptr);
+	assert(end != nullptr);
+	assert(begin <= end);
+	const size_t size = std::distance(begin, end);
+
+	if (size >= 3 && std::equal(UTF_8_BOM, UTF_8_BOM + 3, begin))
 		return UnicodeType::Utf8_BOM;
 
-	if (std::equal(UTF_16_LE_BOM, UTF_16_LE_BOM + sizeof(UTF_16_LE_BOM), begin))
-		return UnicodeType::Utf16_LE_BOM;
+	if (size >= 2) {
+		if (std::equal(UTF_16_LE_BOM, UTF_16_LE_BOM + 2, begin))
+			return UnicodeType::Utf16_LE_BOM;
 
-	if (std::equal(UTF_16_BE_BOM, UTF_16_BE_BOM + sizeof(UTF_16_BE_BOM), begin))
-		return UnicodeType::Utf16_BE_BOM;
+		if (std::equal(UTF_16_BE_BOM, UTF_16_BE_BOM + 2, begin))
+			return UnicodeType::Utf16_BE_BOM;
+	}
 
 	// We don't care about the codepoint, so this is
 	// a simplified version of the decode function.
-	return std::all_of(begin, end, [](char c)
+	uint32_t state = 1;
+	return end != std::find_if(begin, end, [&state](char c)
 	{
+		if (c == 0x9 || c == 0x0a || c == 0x0d || (0x20 <= c && c <= 0x7E))
+			return false;
 		const uint32_t type = utf8d[static_cast<uint8_t>(c)];
-		return !utf8d[256 + 16 + type];
+		state = utf8d[256 + 16*state + type];
+		return state != 0;
 	}) ? UnicodeType::Utf8 : UnicodeType::Mbcs;
 }
 
-template<typename Iterator>
-std::u16string ConvertFromBytes(Iterator begin, Iterator end)
+
+std::u16string ConvertFromBytes(const char* begin, const char* end)
 {
-	using value_type = typename std::decay< decltype(*begin) >::type;
-	static_assert(std::is_same<char, value_type>::value, "Convert only from bytes");
+	assert(begin != nullptr);
+	assert(end != nullptr);
+	assert(begin <= end);
+
 	const auto type = GetFormatType(begin, end);
 	switch (type)
 	{
 	case UnicodeType::Mbcs:
-		std::wstring_convert<deletable_facet<std::codecvt<char16_t, char, mbstate_t>>, char16_t> conv16;
-		return conv16.from_bytes(&*begin, &*end);
+	{
+		std::wstring_convert<deletable_facet<std::codecvt<char16_t, char, mbstate_t>>, char16_t> converter;
+		return converter.from_bytes(begin, end);
+	}
+	case UnicodeType::Utf8:
+	{
+		std::wstring_convert<deletable_facet<std::codecvt_utf8_utf16<char16_t>>, char16_t> converter;
+		return converter.from_bytes(begin, end);
+	}
+	case UnicodeType::Utf8_BOM:
+	{
+		std::wstring_convert<deletable_facet<std::codecvt_utf8_utf16<char16_t, 0x10ffff, std::consume_header>>, char16_t> converter;
+		return converter.from_bytes(begin, end);
+	}
 	}
 }
 
@@ -114,7 +139,7 @@ int main(int argc, char* argv[]) {
 		return -1;
 
 	std::cout << "bytes before convert:\n";
-	std::vector<char> buf((std::istreambuf_iterator<char>(inputFile)), std::istreambuf_iterator<char>());
+	const std::vector<char> buf((std::istreambuf_iterator<char>(inputFile)), std::istreambuf_iterator<char>());
 	if (buf.empty())
 		return -1;
 
@@ -124,7 +149,7 @@ int main(int argc, char* argv[]) {
 		std::cout << std::hex << std::showbase << c;
 	});
 
-	std::u16string str16 = ConvertFromBytes(std::cbegin(buf), std::cend(buf));
+	std::u16string str16 = ConvertFromBytes(buf.data(), buf.data() + buf.size());
 
 	//std::wstring_convert<std::codecvt_utf8_utf16<char16_t, 0x10ffff, std::consume_header>, char16_t> conv16;
 	//str16 = conv16.from_bytes(buf.data(), buf.data() + buf.size());
