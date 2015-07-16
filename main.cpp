@@ -9,11 +9,9 @@
 
 #include <iostream>
 #include <locale>
-#include <string>
 #include <codecvt>
 #include <fstream>
 #include <vector>
-#include <iterator>
 #include <algorithm>
 #include <iomanip>
 #include <cstdint>
@@ -37,7 +35,8 @@ enum struct UnicodeType : int8_t
 	Utf8,
 	Utf8_BOM,
 	Utf16_LE_BOM,
-	Utf16_BE_BOM
+	Utf16_BE_BOM,
+	Ucs2
 };
 
 
@@ -71,28 +70,32 @@ UnicodeType GetFormatType(const char* begin, const char* end)
 	assert(begin <= end);
 	const size_t size = std::distance(begin, end);
 
-	if (size >= 3 && std::equal(UTF_8_BOM, UTF_8_BOM + 3, begin))
+	if (size >= 3 && std::equal(UTF_8_BOM, UTF_8_BOM + 3, begin)) // danger but use memcmp
 		return UnicodeType::Utf8_BOM;
 
 	if (size >= 2) {
-		if (std::equal(UTF_16_LE_BOM, UTF_16_LE_BOM + 2, begin))
+		if (std::equal(UTF_16_LE_BOM, UTF_16_LE_BOM + 2, begin)) // danger but use memcmp
 			return UnicodeType::Utf16_LE_BOM;
 
-		if (std::equal(UTF_16_BE_BOM, UTF_16_BE_BOM + 2, begin))
+		if (std::equal(UTF_16_BE_BOM, UTF_16_BE_BOM + 2, begin)) // danger but use memcmp
 			return UnicodeType::Utf16_BE_BOM;
 	}
 
 	// We don't care about the codepoint, so this is
 	// a simplified version of the decode function.
 	uint32_t state = 1;
-	return end != std::find_if(begin, end, [&state](char c)
+	auto result = UnicodeType::Mbcs;
+	return end != std::find_if(begin, end, [&state, &result](char c)
 	{
 		if (c == 0x9 || c == 0x0a || c == 0x0d || (0x20 <= c && c <= 0x7E))
 			return false;
+
+		result = UnicodeType::Ucs2;
+
 		const uint32_t type = utf8d[static_cast<uint8_t>(c)];
 		state = utf8d[256 + 16*state + type];
 		return state != 0;
-	}) ? UnicodeType::Utf8 : UnicodeType::Mbcs;
+	}) ? UnicodeType::Utf8 : result;
 }
 
 
@@ -120,12 +123,24 @@ std::u16string ConvertFromBytes(const char* begin, const char* end)
 		std::wstring_convert<deletable_facet<std::codecvt_utf8_utf16<char16_t, 0x10ffff, std::consume_header>>, char16_t> converter;
 		return converter.from_bytes(begin, end);
 	}
+	case UnicodeType::Utf16_LE_BOM:
+	case UnicodeType::Utf16_BE_BOM:
+	{
+		std::wstring_convert<deletable_facet<std::codecvt_utf16<char16_t, 0x10ffff, static_cast<std::codecvt_mode>(std::consume_header)>>, char16_t> converter;
+		return converter.from_bytes(begin, end);
+	}
+	case UnicodeType::Ucs2: // utf16 without BOM
+	{
+		std::wstring_convert<deletable_facet<std::codecvt_utf16<char16_t>>, char16_t> converter;
+		return converter.from_bytes(begin, end);
+	}
+	default:
+		assert(false);
+		break;
 	}
 }
 
 }
-
-
 
 int main(int argc, char* argv[]) {
 	std::cout << "Test print unicode text file\n";
@@ -134,7 +149,7 @@ int main(int argc, char* argv[]) {
 		return -1;
 
 	std::ifstream inputFile(argv[1], std::ios::in | std::ios_base::binary);
-	//in.seekg()
+	
 	if (inputFile.bad())
 		return -1;
 
@@ -143,36 +158,16 @@ int main(int argc, char* argv[]) {
 	if (buf.empty())
 		return -1;
 
-
 	std::for_each(cbegin(buf), cend(buf), [](char c)
 	{
 		std::cout << std::hex << std::showbase << c;
 	});
 
-	std::u16string str16 = ConvertFromBytes(buf.data(), buf.data() + buf.size());
-
-	//std::wstring_convert<std::codecvt_utf8_utf16<char16_t, 0x10ffff, std::consume_header>, char16_t> conv16;
-	//str16 = conv16.from_bytes(buf.data(), buf.data() + buf.size());
+	auto str16 = ConvertFromBytes(buf.data(), buf.data() + buf.size());
 
 	std::cout << "Converted to following UTF-16 code points: \n";
 	for (auto c : str16)
 		std::cout << "U+" << std::hex << std::setw(4) << std::setfill('0') << c << '\n';
-	/*in.imbue(std::locale(in.getloc(), new std::codecvt<wchar_t, 0x10ffff,
-		std::codecvt_mode(std::little_endian | std::consume_header)>));
-
-
-	std::wifstream in(argv[1], std::ios::in | std::ios_base::binary);
-	in.imbue(std::locale(in.getloc(), new std::codecvt_utf16<wchar_t, 0x10ffff,
-		std::codecvt_mode(std::little_endian | std::consume_header)>));
-
-	for (wchar_t c; in.get(c);)
-		std::cout << std::hex << std::showbase << c << '\n';*/
-
-	/*std::wstring line;
-	while (std::getline(in, line))
-	{
-		std::wcout << line << std::endl;
-	}*/
 
 	return 0;
 }
