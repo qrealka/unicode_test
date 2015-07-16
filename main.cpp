@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <iomanip>
 #include <cstdint>
+#include <ios>
 #include <assert.h>
 
 namespace
@@ -39,26 +40,6 @@ enum struct UnicodeType : int8_t
 	Ucs2
 };
 
-
-// Copyright (c) 2008-2009 Bjoern Hoehrmann <bjoern@hoehrmann.de>
-// See http://bjoern.hoehrmann.de/utf-8/decoder/dfa/ for details.
-const uint8_t utf8d[] = {
-	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 00..1f
-	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 20..3f
-	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 40..5f
-	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 60..7f
-	1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, // 80..9f
-	7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, // a0..bf
-	8, 8, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, // c0..df
-	0xa, 0x3, 0x3, 0x3, 0x3, 0x3, 0x3, 0x3, 0x3, 0x3, 0x3, 0x3, 0x3, 0x4, 0x3, 0x3, // e0..ef
-	0xb, 0x6, 0x6, 0x6, 0x5, 0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0x8, // f0..ff
-	0x0, 0x1, 0x2, 0x3, 0x5, 0x8, 0x7, 0x1, 0x1, 0x1, 0x4, 0x6, 0x1, 0x1, 0x1, 0x1, // s0..s0
-	1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, // s1..s2
-	1, 2, 1, 1, 1, 1, 1, 2, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, // s3..s4
-	1, 2, 1, 1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 3, 1, 3, 1, 1, 1, 1, 1, 1, // s5..s6
-	1, 3, 1, 1, 1, 1, 1, 3, 1, 3, 1, 1, 1, 1, 1, 1, 1, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // s7..s8
-};
-
 UnicodeType GetFormatType(const char* begin, const char* end)
 {
 	static const char UTF_8_BOM[] = "\xEF\xBB\xBF";
@@ -81,21 +62,7 @@ UnicodeType GetFormatType(const char* begin, const char* end)
 			return UnicodeType::Utf16_BE_BOM;
 	}
 
-	// We don't care about the codepoint, so this is
-	// a simplified version of the decode function.
-	uint32_t state = 1;
-	auto result = UnicodeType::Mbcs;
-	return end != std::find_if(begin, end, [&state, &result](char c)
-	{
-		if (c == 0x9 || c == 0x0a || c == 0x0d || (0x20 <= c && c <= 0x7E))
-			return false;
-
-		result = UnicodeType::Ucs2;
-
-		const uint32_t type = utf8d[static_cast<uint8_t>(c)];
-		state = utf8d[256 + 16*state + type];
-		return state != 0;
-	}) ? UnicodeType::Utf8 : result;
+	return UnicodeType::Utf8;
 }
 
 
@@ -126,17 +93,49 @@ std::u16string ConvertFromBytes(const char* begin, const char* end)
 	case UnicodeType::Utf16_LE_BOM:
 	case UnicodeType::Utf16_BE_BOM:
 	{
-		std::wstring_convert<deletable_facet<std::codecvt_utf16<char16_t, 0x10ffff, static_cast<std::codecvt_mode>(std::consume_header)>>, char16_t> converter;
-		return converter.from_bytes(begin, end);
-	}
-	case UnicodeType::Ucs2: // utf16 without BOM
-	{
-		std::wstring_convert<deletable_facet<std::codecvt_utf16<char16_t>>, char16_t> converter;
+		std::wstring_convert<deletable_facet<std::codecvt_utf16<char16_t, 0x10ffff, std::consume_header>>, char16_t> converter;
 		return converter.from_bytes(begin, end);
 	}
 	default:
-		assert(false);
 		break;
+	}
+
+	std::wstring_convert<deletable_facet<std::codecvt_utf16<char16_t>>, char16_t> converter;
+	return converter.from_bytes(begin, end);
+}
+
+std::wifstream& SafeGetLine(std::wifstream& in, std::wstring& line)
+{
+	line.clear();
+	std::wifstream::sentry se(in, true);
+	
+	auto* buf = in.rdbuf();
+	for (;;)
+	{
+		int c = buf->sbumpc();
+		switch(c) {
+		case 0xfeff:
+		case 0xfffe:
+			continue;
+		case 0xa00:
+		case L'\n':
+			return in;
+		case 0xd00:
+		case L'\r':
+		{
+			auto ch = buf->sgetc();
+			if (ch == L'\n' || ch == 0xa00)
+				buf->sbumpc();
+			return in;
+		}
+		case WEOF:
+			// Also handle the case when the last line has no line ending
+			if (line.empty())
+				in.setstate(std::ios::eofbit | std::ios::failbit | std::ios::badbit);
+			return in;
+		default:
+			line += static_cast<wchar_t>(c);
+		}
 	}
 }
 
@@ -148,26 +147,86 @@ int main(int argc, char* argv[]) {
 	if (argc < 2)
 		return -1;
 
-	std::ifstream inputFile(argv[1], std::ios::in | std::ios_base::binary);
-	
-	if (inputFile.bad())
-		return -1;
-
-	std::cout << "bytes before convert:\n";
-	const std::vector<char> buf((std::istreambuf_iterator<char>(inputFile)), std::istreambuf_iterator<char>());
-	if (buf.empty())
-		return -1;
-
-	std::for_each(cbegin(buf), cend(buf), [](char c)
 	{
-		std::cout << std::hex << std::showbase << c;
-	});
+		std::ifstream inputFile(argv[1], std::ios::in | std::ios_base::binary);
 
-	auto str16 = ConvertFromBytes(buf.data(), buf.data() + buf.size());
+		if (inputFile.bad())
+			return -1;
 
-	std::cout << "Converted to following UTF-16 code points: \n";
-	for (auto c : str16)
-		std::cout << "U+" << std::hex << std::setw(4) << std::setfill('0') << c << '\n';
+		std::cout << "bytes before convert:\n";
+		const std::vector<char> buf((std::istreambuf_iterator<char>(inputFile)), std::istreambuf_iterator<char>());
+		if (buf.empty())
+			return -1;
 
+		std::for_each(cbegin(buf), cend(buf), [](char c)
+		{
+			std::cout << std::hex << std::showbase << c;
+		});
+
+		auto str16 = ConvertFromBytes(buf.data(), buf.data() + buf.size());
+
+		std::cout << "Converted to following UTF-16 code points: \n";
+		for (auto c : str16)
+			std::cout << "U+" << std::hex << std::setw(4) << std::setfill('0') << c << '\n';
+	}
+	/*
+	FILE* f = nullptr;
+	if (fopen_s(&f, argv[1], "rt, ccs=UTF-8"))
+		return -1;
+
+	std::cout << "\nConverted to following UTF-16 by fgetws: \n";
+
+	wchar_t wbuf[4096] = {};
+	while (fgetws(wbuf, 4096, f))
+	{
+		for (auto c : wbuf)
+		{
+			if (!c || c==10) break;
+			std::cout << "U+" << std::hex << std::setw(4) << std::setfill('0') << c << ' ';
+		}
+		std::cout << std::endl;
+	}
+
+	fclose(f);
+	*/
+	std::wifstream in(argv[1], std::ios::binary | std::ios::ate);
+	if (in.bad())
+		return -1;
+	int64_t fsize = in.tellg();
+	if (!fsize)
+		return -1;
+
+	in.seekg(0, std::ios::beg);
+	in.imbue(std::locale(in.getloc(), new std::codecvt_utf8_utf16<wchar_t, 0x10ffff, std::consume_header>));
+
+	std::cout << "\nConverted to following UTF-16 by wifstream: \n";
+	std::wstring line;
+	for (bool first = true;; first = false)
+	{
+		//getline(in, line);
+		SafeGetLine(in, line);
+
+		if (in.bad() || in.fail())
+		{
+			if (first)
+			{
+				in.close();
+				in.open(argv[1], std::ios::binary);
+				in.seekg(0, std::ios::beg);
+				in.imbue(std::locale(in.getloc(), new std::codecvt_utf16<wchar_t, 0x10ffff, std::consume_header>));
+				continue;
+			}
+			break;
+		}
+		else
+		{
+			for (auto c : line)
+				std::cout << "U+" << std::hex << std::setw(4) << std::setfill('0') << c << ' ';
+
+			std::cout << std::endl;
+			if (in.eof())
+				break;
+		}
+	}
 	return 0;
 }
